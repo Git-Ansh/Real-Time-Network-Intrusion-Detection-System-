@@ -1,13 +1,25 @@
 import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
-import { Card, CardHeader, CardContent, CardFooter, CardTitle } from "../components/ui/card";
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  CardFooter,
+  CardTitle,
+} from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "../components/ui/alert";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { ExclamationTriangleIcon } from "../components/ui/icons";
 import * as d3 from "d3";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
 
 const TrafficMonitor = () => {
   const [packets, setPackets] = useState([]);
@@ -418,10 +430,7 @@ const TrafficMonitor = () => {
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Network Traffic Monitor</CardTitle>
           <div className="flex space-x-2 items-center">
-            <Select
-              value={protocolFilter}
-              onValueChange={setProtocolFilter}
-            >
+            <Select value={protocolFilter} onValueChange={setProtocolFilter}>
               <SelectTrigger className="w-[180px]">
                 <SelectValue placeholder="All Protocols" />
               </SelectTrigger>
@@ -434,7 +443,7 @@ const TrafficMonitor = () => {
                 <SelectItem value="DNS">DNS</SelectItem>
               </SelectContent>
             </Select>
-            
+
             <Button
               variant="default"
               size="sm"
@@ -443,7 +452,7 @@ const TrafficMonitor = () => {
             >
               Refresh
             </Button>
-            
+
             <Button
               variant={autoRefresh ? "default" : "outline"}
               size="sm"
@@ -457,10 +466,12 @@ const TrafficMonitor = () => {
         <CardContent>
           <div className="space-y-8">
             <div>
-              <h5 className="text-lg font-medium mb-2">Network Traffic Graph</h5>
+              <h5 className="text-lg font-medium mb-2">
+                Network Traffic Graph
+              </h5>
               <p className="text-sm text-muted-foreground mb-4">
-                Visualizes connections between hosts. Hover over nodes (IPs)
-                and edges (connections) to see details.
+                Visualizes connections between hosts. Hover over nodes (IPs) and
+                edges (connections) to see details.
               </p>
               <div className="flex justify-center">
                 <svg
@@ -478,9 +489,9 @@ const TrafficMonitor = () => {
                 Visualizes packet size over time, colored by protocol.
               </p>
               <div className="flex justify-center">
-                <svg 
-                  ref={timelineRef} 
-                  width={width} 
+                <svg
+                  ref={timelineRef}
+                  width={width}
                   height={200}
                   className="border rounded-md"
                 ></svg>
@@ -488,7 +499,7 @@ const TrafficMonitor = () => {
             </div>
           </div>
         </CardContent>
-        
+
         <CardFooter className="text-sm text-muted-foreground">
           Showing {packets.length} packets
           {protocolFilter && ` filtered by ${protocolFilter} protocol`}.

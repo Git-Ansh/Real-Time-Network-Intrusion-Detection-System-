@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import AuthService from "../utils/AuthService";
-import { Card, CardContent, CardFooter, CardHeader } from "../components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+} from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Button } from "../components/ui/button";
@@ -56,7 +61,9 @@ const Login = ({ setIsAuthenticated }) => {
         <Card className="shadow-lg">
           <CardHeader className="bg-primary text-white space-y-1 p-6">
             <div className="text-center">
-              <h3 className="text-2xl font-bold text-white">Network Intrusion Detection System</h3>
+              <h3 className="text-2xl font-bold text-white">
+                Network Intrusion Detection System
+              </h3>
               <p className="text-lg text-white">Login</p>
             </div>
           </CardHeader>
@@ -95,11 +102,7 @@ const Login = ({ setIsAuthenticated }) => {
                 />
               </div>
 
-              <Button 
-                className="w-full" 
-                type="submit" 
-                disabled={loading}
-              >
+              <Button className="w-full" type="submit" disabled={loading}>
                 {loading ? "Logging in..." : "Login"}
               </Button>
             </form>

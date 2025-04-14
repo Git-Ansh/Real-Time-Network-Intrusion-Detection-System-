@@ -1,13 +1,32 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import { Card, CardHeader, CardContent, CardFooter, CardTitle } from "../components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import {
+  Card,
+  CardHeader,
+  CardContent,
+  CardFooter,
+  CardTitle,
+} from "../components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "../components/ui/alert";
 import { Checkbox } from "../components/ui/checkbox";
 import { Label } from "../components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import { ExclamationTriangleIcon } from "../components/ui/icons";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5000/api";
@@ -162,29 +181,29 @@ const Alerts = () => {
                     <Checkbox
                       id="anomaliesOnly"
                       checked={filters.anomaliesOnly}
-                      onCheckedChange={(checked) => 
+                      onCheckedChange={(checked) =>
                         handleFilterChange("anomaliesOnly", checked)
                       }
                     />
                     <Label htmlFor="anomaliesOnly">Show Anomalies Only</Label>
                   </div>
-                  
+
                   <div className="flex items-center space-x-2">
                     <Checkbox
                       id="attacksOnly"
                       checked={filters.attacksOnly}
-                      onCheckedChange={(checked) => 
+                      onCheckedChange={(checked) =>
                         handleFilterChange("attacksOnly", checked)
                       }
                     />
                     <Label htmlFor="attacksOnly">Show Attacks Only</Label>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label htmlFor="limit">Results Limit</Label>
                     <Select
                       value={filters.limit.toString()}
-                      onValueChange={(value) => 
+                      onValueChange={(value) =>
                         handleFilterChange("limit", parseInt(value))
                       }
                     >
@@ -199,7 +218,7 @@ const Alerts = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  
+
                   <div className="flex items-end">
                     <Button
                       variant="outline"
@@ -254,21 +273,16 @@ const Alerts = () => {
                             : ""
                         }
                       >
-                        <TableCell>{formatTimestamp(detection.timestamp)}</TableCell>
+                        <TableCell>
+                          {formatTimestamp(detection.timestamp)}
+                        </TableCell>
                         <TableCell>{getSeverityBadge(detection)}</TableCell>
                         <TableCell>{detection.attack_type || "N/A"}</TableCell>
                         <TableCell>
-                          {getScoreBadge(
-                            detection.anomaly_score,
-                            -0.3,
-                            true
-                          )}
+                          {getScoreBadge(detection.anomaly_score, -0.3, true)}
                         </TableCell>
                         <TableCell>
-                          {getScoreBadge(
-                            detection.attack_probability,
-                            0.7
-                          )}
+                          {getScoreBadge(detection.attack_probability, 0.7)}
                         </TableCell>
                       </TableRow>
                     ))

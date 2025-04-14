@@ -92,50 +92,49 @@ def detection_collector():
             pass
         except Exception as e:
             logger.error(f"Error in detection collector: {str(e)}")
-            
+
 def packet_collector():
     """Thread to collect packet data for visualization"""
     while True:
         try:
-            # Try to get packet from queue
-            packet = packet_queue.get(block=False)
+            # Check if packet queue has data to collect
+            if packet_queue.empty():
+                time.sleep(0.1)  # Sleep briefly to avoid busy waiting
+                continue
             
-            # Deep copy relevant packet info to avoid storing too much data
-            simplified_packet = {
-                "timestamp": packet.get("timestamp"),
-                "size": packet.get("size"),
-                "protocols": packet.get("protocols", []),
-                "src_ip": packet.get("src_ip", "unknown"),
-                "dst_ip": packet.get("dst_ip", "unknown"),
-                "src_port": packet.get("src_port", 0),
-                "dst_port": packet.get("dst_port", 0)
-            }
-            
-            # Store packet data
+            # Try to get copy of packet without consuming it
+            try:
+                packet = packet_queue.queue[0]
+            except IndexError:
+                continue
+                
+            # Store packet for visualization
             with packet_lock:
-                recent_packets.append(simplified_packet)
+                recent_packets.append(packet)
                 # Trim list if needed
                 if len(recent_packets) > max_stored_packets:
                     recent_packets.pop(0)
+                    
+            time.sleep(0.01)  # Small delay to avoid overwhelming CPU
             
-            # Put packet back in queue for processor
-            packet_queue.put(packet)
-            
-        except queue.Empty:
-            time.sleep(0.1)  # Sleep briefly to avoid busy waiting
         except Exception as e:
             logger.error(f"Error in packet collector: {str(e)}")
+            time.sleep(1)  # Longer sleep on error
 
 # Start collector threads
 def start_collectors():
     """Start background collector threads"""
+    # Start detection collector thread
     detection_thread = threading.Thread(target=detection_collector)
     detection_thread.daemon = True
     detection_thread.start()
     
+    # Start packet collector thread
     packet_thread = threading.Thread(target=packet_collector)
     packet_thread.daemon = True
     packet_thread.start()
+    
+    logger.info("Started collector threads")
 
 # Authentication endpoints
 @app.route('/api/auth/login', methods=['POST'])
@@ -175,34 +174,45 @@ def start_system():
     global system_status
     
     try:
-        # Initialize if needed
+        # Check if already running
+        if sniffer and sniffer.running:
+            return jsonify({"status": "already running"}), 200
+            
+        # Initialize components if needed
         initialize_system()
         
-        # Start sniffer
-        if not sniffer.running:
-            sniffer.start_capture()
-            system_status["sniffer"] = "running"
-            
-        # Start processor
-        if not processor.running:
-            processor.start_processing()
-            system_status["processor"] = "running"
-            
-        # Start detector
-        if not detector.running:
-            detector.start_detection()
-            system_status["detector"] = "running"
-            
-        # Record start time
-        if system_status["start_time"] is None:
-            system_status["start_time"] = time.time()
-            
-        logger.info("System started successfully")
-        return jsonify({"status": "success", "message": "System started"}), 200
-    
+        # Set capture parameters if provided
+        if request.is_json:
+            if 'interface' in request.json:
+                sniffer.interface = request.json['interface']
+                
+            if 'filter' in request.json:
+                sniffer.filter_str = request.json['filter']
+                
+            # Set detector thresholds if provided
+            if 'anomaly_threshold' in request.json:
+                detector.set_anomaly_threshold(float(request.json['anomaly_threshold']))
+                
+            if 'attack_threshold' in request.json:
+                detector.set_attack_threshold(float(request.json['attack_threshold']))
+        
+        # Start components
+        sniffer.start_capture()
+        processor.start_processing()
+        detector.start_detection()
+        
+        # Update status
+        system_status["sniffer"] = "running"
+        system_status["processor"] = "running"
+        system_status["detector"] = "running"
+        system_status["start_time"] = time.time()
+        
+        logger.info("System started")
+        return jsonify({"status": "started"}), 200
+        
     except Exception as e:
         logger.error(f"Error starting system: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/system/stop', methods=['POST'])
 @jwt_required()
@@ -211,30 +221,30 @@ def stop_system():
     global system_status
     
     try:
-        # Stop components in reverse order
-        if detector and detector.running:
-            detector.stop_detection()
-            system_status["detector"] = "stopped"
-            
-        if processor and processor.running:
-            processor.stop_processing()
-            system_status["processor"] = "stopped"
-            
-        if sniffer and sniffer.running:
+        # Check if components exist and are running
+        if sniffer:
             sniffer.stop_capture()
             system_status["sniffer"] = "stopped"
             
-        logger.info("System stopped successfully")
-        return jsonify({"status": "success", "message": "System stopped"}), 200
-    
+        if processor:
+            processor.stop_processing()
+            system_status["processor"] = "stopped"
+            
+        if detector:
+            detector.stop_detection()
+            system_status["detector"] = "stopped"
+        
+        logger.info("System stopped")
+        return jsonify({"status": "stopped"}), 200
+        
     except Exception as e:
         logger.error(f"Error stopping system: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/system/status', methods=['GET'])
+@app.route('/api/system/status/full', methods=['GET'])
 @jwt_required()
-def get_system_status():
-    """Get current system status"""
+def get_system_status_full():
+    """Get current detailed system status"""
     global system_status
     
     try:
@@ -266,25 +276,49 @@ def get_system_status():
 
 def calculate_detection_rate():
     """Calculate detection rate over the last minute"""
-    with detection_lock:
-        if not recent_detections:
-            return 0
+    if not recent_detections:
+        return 0
         
-        # Get detections from last minute
-        current_time = time.time()
-        recent = [d for d in recent_detections 
-                  if d["timestamp"] > current_time - 60]
+    one_minute_ago = time.time() - 60
+    recent_count = sum(1 for d in recent_detections if d.get("timestamp", 0) >= one_minute_ago)
+    return recent_count / 60  # detections per second
+
+@app.route('/api/system/settings', methods=['POST'])
+@jwt_required()
+def update_settings():
+    """Update system settings"""
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Missing JSON in request"}), 400
+            
+        settings = request.json
         
-        # Count anomalies and attacks
-        anomaly_count = sum(1 for d in recent if d["is_anomaly"])
-        attack_count = sum(1 for d in recent if d["is_attack"])
+        # Initialize components if needed
+        initialize_system()
         
-        return {
-            "total_detections": len(recent),
-            "anomalies": anomaly_count,
-            "attacks": attack_count,
-            "period_seconds": 60
-        }
+        # Update sniffer settings
+        if 'interface' in settings and sniffer:
+            sniffer.interface = settings['interface']
+            logger.info(f"Updated capture interface to: {settings['interface']}")
+            
+        if 'capture_filter' in settings and sniffer:
+            sniffer.filter_str = settings['capture_filter']
+            logger.info(f"Updated capture filter to: {settings['capture_filter']}")
+        
+        # Update detector settings
+        if 'anomaly_threshold' in settings and detector:
+            detector.set_anomaly_threshold(float(settings['anomaly_threshold']))
+            
+        if 'attack_threshold' in settings and detector:
+            detector.set_attack_threshold(float(settings['attack_threshold']))
+        
+        # Handle other settings as needed
+        
+        return jsonify({"status": "success", "message": "Settings updated"}), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating settings: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 # Data endpoints
 @app.route('/api/data/detections', methods=['GET'])
@@ -292,148 +326,197 @@ def calculate_detection_rate():
 def get_detections():
     """Get recent detections"""
     try:
-        # Get query parameters
-        limit = min(int(request.args.get('limit', 100)), 1000)
-        anomalies_only = request.args.get('anomalies_only', 'false').lower() == 'true'
-        attacks_only = request.args.get('attacks_only', 'false').lower() == 'true'
+        # Parse optional query parameters
+        limit = min(int(request.args.get('limit', 50)), max_stored_detections)
+        anomalies_only = request.args.get('anomalies_only', '').lower() == 'true'
+        attacks_only = request.args.get('attacks_only', '').lower() == 'true'
         
         with detection_lock:
+            # Apply filters
             filtered_detections = recent_detections
             
-            # Apply filters
             if anomalies_only:
-                filtered_detections = [d for d in filtered_detections if d["is_anomaly"]]
-            if attacks_only:
-                filtered_detections = [d for d in filtered_detections if d["is_attack"]]
+                filtered_detections = [d for d in filtered_detections if d.get('is_anomaly', False)]
                 
-            # Sort by timestamp (newest first) and limit
-            sorted_detections = sorted(filtered_detections, 
-                                      key=lambda d: d["timestamp"], 
-                                      reverse=True)
-            limited_detections = sorted_detections[:limit]
-            
-        return jsonify(limited_detections), 200
-    
+            if attacks_only:
+                filtered_detections = [d for d in filtered_detections if d.get('is_attack', False)]
+                
+            # Sort by timestamp (descending) and limit
+            result = sorted(filtered_detections, key=lambda d: d.get('timestamp', 0), reverse=True)[:limit]
+        
+        return jsonify(result), 200
+        
     except Exception as e:
         logger.error(f"Error getting detections: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/data/packets', methods=['GET'])
 @jwt_required()
 def get_packets():
     """Get recent packets for visualization"""
     try:
-        # Get query parameters
-        limit = min(int(request.args.get('limit', 100)), 1000)
-        protocol_filter = request.args.get('protocol', None)
+        # Parse optional query parameters
+        limit = min(int(request.args.get('limit', 100)), max_stored_packets)
+        protocol_filter = request.args.get('protocol', '').upper()
         
         with packet_lock:
-            filtered_packets = recent_packets
-            
-            # Apply protocol filter
+            # Apply filters
             if protocol_filter:
-                filtered_packets = [p for p in filtered_packets 
-                                  if protocol_filter in p["protocols"]]
+                filtered_packets = [p for p in recent_packets if protocol_filter in p.get('protocols', [])]
+            else:
+                filtered_packets = recent_packets
                 
-            # Sort by timestamp (newest first) and limit
-            sorted_packets = sorted(filtered_packets, 
-                                   key=lambda p: p["timestamp"], 
-                                   reverse=True)
-            limited_packets = sorted_packets[:limit]
-            
-        return jsonify(limited_packets), 200
-    
+            # Sort by timestamp (descending) and limit
+            result = sorted(filtered_packets, key=lambda p: p.get('timestamp', 0), reverse=True)[:limit]
+        
+        return jsonify(result), 200
+        
     except Exception as e:
         logger.error(f"Error getting packets: {str(e)}")
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/data/statistics', methods=['GET'])
 @jwt_required()
 def get_statistics():
     """Get traffic statistics"""
     try:
-        with packet_lock:
-            # Calculate protocol distribution
-            protocol_counts = {}
-            for packet in recent_packets:
-                for protocol in packet["protocols"]:
-                    if protocol not in protocol_counts:
-                        protocol_counts[protocol] = 0
-                    protocol_counts[protocol] += 1
-                    
-            # Calculate port distribution
-            port_counts = {}
-            for packet in recent_packets:
-                if "dst_port" in packet:
-                    port = packet["dst_port"]
-                    if port not in port_counts:
-                        port_counts[port] = 0
-                    port_counts[port] += 1
-            
-            # Get top 10 ports
-            top_ports = sorted([(port, count) for port, count in port_counts.items()], 
-                              key=lambda x: x[1], reverse=True)[:10]
-            
-        # Calculate traffic over time
-        traffic_over_time = calculate_traffic_over_time()
+        time_range = int(request.args.get('time_range', 300))  # Default: 5 minutes
         
-        # Build statistics
         stats = {
-            "protocol_distribution": protocol_counts,
-            "top_ports": dict(top_ports),
-            "traffic_over_time": traffic_over_time
+            "packet_count": len(recent_packets),
+            "detection_count": len(recent_detections),
+            "anomaly_count": sum(1 for d in recent_detections if d.get('is_anomaly', False)),
+            "attack_count": sum(1 for d in recent_detections if d.get('is_attack', False)),
+            "protocols": {},
+            "traffic_over_time": calculate_traffic_over_time(time_range)
         }
         
+        # Calculate protocol distribution
+        protocols = {}
+        for packet in recent_packets:
+            for protocol in packet.get('protocols', []):
+                protocols[protocol] = protocols.get(protocol, 0) + 1
+        
+        stats["protocols"] = protocols
+        
         return jsonify(stats), 200
-    
+        
     except Exception as e:
         logger.error(f"Error getting statistics: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+def calculate_traffic_over_time(time_range=300, intervals=30):
+    """Calculate traffic distribution over time"""
+    now = time.time()
+    start_time = now - time_range
+    interval_length = time_range / intervals
+    
+    # Initialize intervals
+    traffic_intervals = {i: {"packets": 0, "bytes": 0} for i in range(intervals)}
+    
+    for packet in recent_packets:
+        ts = packet.get('timestamp', 0)
+        if ts >= start_time:
+            # Calculate which interval this packet belongs to
+            interval = min(intervals - 1, int((ts - start_time) / interval_length))
+            traffic_intervals[interval]["packets"] += 1
+            traffic_intervals[interval]["bytes"] += packet.get('size', 0)
+    
+    # Convert to array form for easier plotting
+    result = []
+    for i in range(intervals):
+        interval_start = start_time + (i * interval_length)
+        result.append({
+            "time": interval_start,
+            "packets": traffic_intervals[i]["packets"],
+            "bytes": traffic_intervals[i]["bytes"]
+        })
+    
+    return result
+
+# System status endpoint for dashboard
+@app.route('/api/system/metrics', methods=['GET'])
+@jwt_required()
+def get_system_metrics():
+    """Get system metrics for dashboard"""
+    try:
+        import psutil
+        
+        # Get system metrics
+        metrics = {
+            "cpu_percent": psutil.cpu_percent(),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_percent": psutil.disk_usage('/').percent
+        }
+        
+        return jsonify(metrics), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting system metrics: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# Simplified status endpoint for dashboard
+@app.route('/api/system/status', methods=['GET'])
+@jwt_required()
+def get_dashboard_status():
+    """Get system status for dashboard"""
+    global system_status
+    
+    try:
+        # Simplify status for dashboard
+        status = {
+            "sniffer": system_status["sniffer"],
+            "processor": system_status["processor"],
+            "detector": system_status["detector"],
+            "start_time": system_status["start_time"],
+            "packets_captured": sniffer.packet_count if sniffer else 0,
+            "packets_per_second": sniffer.get_packet_rate() if sniffer and hasattr(sniffer, 'get_packet_rate') else 0,
+            "anomalies_detected": detector.anomaly_count if detector else 0,
+            "attacks_detected": detector.attack_count if detector else 0,
+            "active_flows": len(processor.flow_stats) if processor and hasattr(processor, 'flow_stats') else 0
+        }
+        
+        return jsonify(status), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting dashboard status: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-def calculate_traffic_over_time():
-    """Calculate traffic volume over time (last hour in 5-minute buckets)"""
-    with packet_lock:
-        if not recent_packets:
-            return []
-            
-        # Get current time and earliest packet time
-        current_time = time.time()
-        earliest_time = current_time - 3600  # 1 hour ago
+# Recent detections endpoint for dashboard alerts
+@app.route('/api/detections/recent', methods=['GET'])
+@jwt_required()
+def get_recent_detections():
+    """Get recent detections for dashboard alerts"""
+    try:
+        limit = min(int(request.args.get('limit', 10)), max_stored_detections)
         
-        # Create 5-minute buckets
-        buckets = []
-        for i in range(12):  # 12 5-minute buckets in an hour
-            start_time = earliest_time + (i * 300)
-            end_time = start_time + 300
-            buckets.append({
-                "start_time": start_time,
-                "end_time": end_time,
-                "packet_count": 0,
-                "byte_count": 0
-            })
+        with detection_lock:
+            # Validate detection objects and filter out any that aren't properly formatted
+            valid_detections = []
+            for detection in recent_detections:
+                # Check if detection is a dictionary with at least a timestamp
+                if isinstance(detection, dict) and 'timestamp' in detection:
+                    valid_detections.append(detection)
+                else:
+                    logger.warning(f"Invalid detection object found: {type(detection)}")
             
-        # Count packets in each bucket
-        for packet in recent_packets:
-            if packet["timestamp"] < earliest_time:
-                continue
-                
-            # Find bucket for this packet
-            bucket_index = min(int((packet["timestamp"] - earliest_time) / 300), 11)
-            buckets[bucket_index]["packet_count"] += 1
-            buckets[bucket_index]["byte_count"] += packet["size"]
-            
-        return buckets
+            # Sort by timestamp (descending) and limit
+            result = sorted(valid_detections, key=lambda d: d.get('timestamp', 0), reverse=True)[:limit]
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting recent detections: {str(e)}")
+        # Return empty array instead of error to prevent frontend from breaking
+        return jsonify([]), 200
 
-# API Main
-if __name__ == '__main__':
-    # Initialize components
+if __name__ == "__main__":
+    # Initialize system on startup
     initialize_system()
     
-    # Start background collectors
+    # Start collector threads
     start_collectors()
     
-    # Start the API server
-    port = int(os.getenv('PORT', 5000))
-    debug = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    # Start Flask app (use waitress or gunicorn in production)
+    port = int(os.getenv('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=False)

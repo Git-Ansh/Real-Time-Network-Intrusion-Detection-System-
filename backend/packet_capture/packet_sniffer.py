@@ -1,212 +1,220 @@
-import os
 import time
 import threading
-from scapy.all import sniff, IP, TCP, UDP, DNS, Raw
-import logging
-import json
 import queue
+import logging
+import socket
+from scapy.all import sniff, IP, TCP, UDP, DNS, Raw
+from scapy.layers.http import HTTP
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class PacketSniffer:
-    def __init__(self, interface=None, output_queue=None, filter_str=""):
+    def __init__(self, output_queue=None, interface=None, filter_string=""):
         """
         Initialize the packet sniffer
         
         Args:
-            interface: Network interface to capture on (None = auto-select)
-            output_queue: Queue to place captured packets for processing
-            filter_str: BPF filter string (e.g., "tcp port 80")
+            output_queue: Queue to place captured packets
+            interface: Network interface to sniff on
+            filter_string: BPF filter string to apply
         """
-        self.interface = interface
-        self.running = False
-        self.filter_str = filter_str
         self.output_queue = output_queue if output_queue else queue.Queue()
-        self.packet_thread = None
+        self.interface = interface
+        self.filter_string = filter_string
+        self.running = False
+        self.sniffer_thread = None
         self.packet_count = 0
         self.start_time = 0
-        
-    def start_capture(self, packet_count=0, timeout=None):
-        """
-        Start capturing packets
-        
-        Args:
-            packet_count: Number of packets to capture (0 = infinite)
-            timeout: Timeout in seconds (None = no timeout)
-        """
+        self.enable_http_logging = False
+        self.enable_dns_logging = True
+    
+    def start_capture(self):
+        """Start packet capture - this is an alias for the start() method to maintain compatibility"""
+        return self.start()
+    
+    def start(self):
+        """Start packet capture in a separate thread"""
         if self.running:
-            logger.warning("Packet capture already running")
+            logger.warning("Packet sniffer already running")
             return
-            
+        
         self.running = True
         self.start_time = time.time()
         self.packet_count = 0
+        self.sniffer_thread = threading.Thread(target=self._sniff_packets, daemon=True)
+        self.sniffer_thread.start()
+        logger.info(f"Started packet sniffer on interface {self.interface or 'default'}")
         
-        # Start the capture thread
-        self.packet_thread = threading.Thread(target=self._capture_packets, 
-                                             args=(packet_count, timeout))
-        self.packet_thread.daemon = True
-        self.packet_thread.start()
-        
-        logger.info(f"Started packet capture on interface {self.interface or 'default'}")
-        if self.filter_str:
-            logger.info(f"Using filter: {self.filter_str}")
+        if self.filter_string:
+            logger.info(f"Using filter: {self.filter_string}")
     
     def stop_capture(self):
-        """Stop the packet capture"""
-        if not self.running:
-            logger.warning("Packet capture not running")
-            return
-            
+        """Stop packet capture - this is an alias for the stop() method to maintain compatibility"""
+        return self.stop()
+    
+    def stop(self):
+        """Stop packet capture"""
         self.running = False
-        if self.packet_thread:
-            self.packet_thread.join(2.0)  # Wait up to 2 seconds
-            
-        duration = time.time() - self.start_time
-        logger.info(f"Stopped packet capture. Captured {self.packet_count} packets in {duration:.2f} seconds")
-        
-    def _capture_packets(self, packet_count=0, timeout=None):
-        """Internal method to capture packets"""
+        if self.sniffer_thread:
+            # Give the thread time to exit gracefully
+            time.sleep(0.5)
+            self.sniffer_thread = None
+        logger.info("Stopped packet sniffer")
+    
+    def _sniff_packets(self):
+        """Perform packet capture and process packets"""
         try:
-            sniff(iface=self.interface,
-                  prn=self._process_packet,
-                  filter=self.filter_str,
-                  count=packet_count if packet_count > 0 else None,
-                  timeout=timeout,
-                  store=0)
+            logger.info("Starting packet sniffing...")
+            # This will run until interrupted or stopped
+            sniff(
+                iface=self.interface,
+                filter=self.filter_string if self.filter_string else None,
+                prn=self._process_packet,
+                store=0,
+                stop_filter=lambda _: not self.running
+            )
         except Exception as e:
-            logger.error(f"Error in packet capture: {str(e)}")
+            logger.error(f"Error in packet sniffer: {str(e)}")
             self.running = False
     
     def _process_packet(self, packet):
-        """Process captured packet and add to queue"""
-        if not self.running:
-            return
-            
-        self.packet_count += 1
-        
-        # Extract basic packet info
+        """Process a captured packet"""
+        try:
+            packet_info = self._extract_packet_info(packet)
+            if packet_info:
+                self.packet_count += 1
+                if self.output_queue:
+                    # Don't block if queue is full, just drop the packet
+                    try:
+                        self.output_queue.put(packet_info, block=False)
+                    except queue.Full:
+                        pass
+        except Exception as e:
+            logger.error(f"Error processing packet: {str(e)}")
+    
+    def _extract_packet_info(self, packet):
+        """Extract relevant information from packet"""
+        timestamp = time.time()
+        protocols = []
         packet_info = {
-            "timestamp": float(time.time()),
-            "packet_number": self.packet_count,
-            "size": len(packet),
-            "protocols": []
+            'timestamp': timestamp,
+            'size': len(packet),
+            'protocols': protocols,
+            'src_ip': None,
+            'dst_ip': None,
+            'src_port': None,
+            'dst_port': None,
+            'protocol': None,
         }
         
-        # Handle IP layer
+        # Extract IP layer info if present
         if IP in packet:
-            packet_info["src_ip"] = packet[IP].src
-            packet_info["dst_ip"] = packet[IP].dst
-            packet_info["protocols"].append("IP")
+            packet_info['src_ip'] = packet[IP].src
+            packet_info['dst_ip'] = packet[IP].dst
+            packet_info['protocol'] = packet[IP].proto
+            protocols.append('IP')
             
-            # Handle TCP layer
+            # Extract TCP/UDP layer info if present
             if TCP in packet:
-                packet_info["src_port"] = packet[TCP].sport
-                packet_info["dst_port"] = packet[TCP].dport
-                packet_info["protocols"].append("TCP")
+                packet_info['src_port'] = packet[TCP].sport
+                packet_info['dst_port'] = packet[TCP].dport
+                packet_info['flags'] = packet[TCP].flags
+                protocols.append('TCP')
                 
-                # Check for HTTP
-                if packet[TCP].dport == 80 or packet[TCP].sport == 80:
-                    if Raw in packet:
-                        raw_data = packet[Raw].load.decode('utf-8', 'ignore')
-                        if raw_data.startswith(('GET', 'POST', 'HTTP')):
-                            packet_info["protocols"].append("HTTP")
-                            http_info = self._parse_http(raw_data)
-                            packet_info.update(http_info)
-            
-            # Handle UDP layer
+                # Look for HTTP in TCP packets
+                if self.enable_http_logging:
+                    try:
+                        if Raw in packet and packet[TCP].dport == 80 or packet[TCP].sport == 80:
+                            # Try to parse as HTTP
+                            if b'HTTP/' in packet[Raw].load:
+                                protocols.append('HTTP')
+                                # Don't store raw content - could be large and privacy concerns
+                                packet_info['http_detected'] = True
+                    except:
+                        pass
+                        
             elif UDP in packet:
-                packet_info["src_port"] = packet[UDP].sport
-                packet_info["dst_port"] = packet[UDP].dport
-                packet_info["protocols"].append("UDP")
+                packet_info['src_port'] = packet[UDP].sport
+                packet_info['dst_port'] = packet[UDP].dport
+                protocols.append('UDP')
                 
-                # Check for DNS
-                if DNS in packet:
-                    packet_info["protocols"].append("DNS")
-                    dns_info = self._parse_dns(packet[DNS])
-                    packet_info.update(dns_info)
+                # Look for DNS in UDP packets
+                if self.enable_dns_logging and (packet[UDP].sport == 53 or packet[UDP].dport == 53):
+                    if DNS in packet:
+                        protocols.append('DNS')
+                        # Extract DNS query details
+                        if packet.haslayer(DNS) and packet[DNS].qr == 0:  # 0 = query
+                            try:
+                                packet_info['dns_query'] = packet[DNS].qd.qname.decode('utf-8')
+                            except:
+                                pass
         
-        # Add packet info to the queue for further processing
-        try:
-            self.output_queue.put(packet_info, block=False)
-        except queue.Full:
-            logger.warning("Output queue is full, dropping packet")
-    
-    def _parse_http(self, raw_data):
-        """Parse HTTP data from raw packet"""
-        http_info = {"http_type": "unknown"}
-        try:
-            lines = raw_data.split('\r\n')
-            if lines and len(lines) > 0:
-                first_line = lines[0]
-                if first_line.startswith('GET'):
-                    http_info["http_type"] = "request"
-                    http_info["http_method"] = "GET"
-                    parts = first_line.split()
-                    if len(parts) > 1:
-                        http_info["http_path"] = parts[1]
-                elif first_line.startswith('POST'):
-                    http_info["http_type"] = "request"
-                    http_info["http_method"] = "POST"
-                    parts = first_line.split()
-                    if len(parts) > 1:
-                        http_info["http_path"] = parts[1]
-                elif first_line.startswith('HTTP'):
-                    http_info["http_type"] = "response"
-                    parts = first_line.split()
-                    if len(parts) > 1:
-                        http_info["http_status"] = parts[1]
-        except Exception as e:
-            logger.error(f"Error parsing HTTP data: {str(e)}")
-        return http_info
-    
-    def _parse_dns(self, dns_packet):
-        """Parse DNS data from packet"""
-        dns_info = {"dns_type": "unknown"}
-        try:
-            if dns_packet.qr == 0:
-                dns_info["dns_type"] = "query"
-            else:
-                dns_info["dns_type"] = "response"
-                
-            if dns_packet.ancount > 0:
-                dns_info["dns_answers"] = dns_packet.ancount
-                
-            if hasattr(dns_packet, "qd") and dns_packet.qd:
-                dns_info["dns_query"] = dns_packet.qd.qname.decode('utf-8')
-        except Exception as e:
-            logger.error(f"Error parsing DNS data: {str(e)}")
-        return dns_info
+        return packet_info
     
     def get_stats(self):
-        """Get capture statistics"""
-        if not self.start_time:
-            return {"status": "not started"}
-            
-        duration = time.time() - self.start_time
+        """Get sniffer statistics"""
+        uptime = time.time() - self.start_time if self.start_time > 0 else 0
+        pps = self.packet_count / uptime if uptime > 0 else 0
+        
         return {
-            "status": "running" if self.running else "stopped",
-            "packets_captured": self.packet_count,
-            "duration_seconds": duration,
-            "packets_per_second": self.packet_count / duration if duration > 0 else 0
+            'status': 'running' if self.running else 'stopped',
+            'packet_count': self.packet_count,
+            'uptime': uptime,
+            'packets_per_second': pps,
+            'interface': self.interface or 'default',
+            'filter': self.filter_string,
+            'http_logging': self.enable_http_logging,
+            'dns_logging': self.enable_dns_logging
         }
-
+    
+    def get_packet_rate(self):
+        """Calculate current packet rate (packets per second)"""
+        uptime = time.time() - self.start_time if self.start_time > 0 else 0
+        if uptime <= 0:
+            return 0
+        return self.packet_count / uptime
+    
+    def update_settings(self, settings):
+        """Update sniffer settings"""
+        restart_required = False
+        
+        if 'interface' in settings and settings['interface'] != self.interface:
+            self.interface = settings['interface']
+            restart_required = True
+            
+        if 'filter' in settings and settings['filter'] != self.filter_string:
+            self.filter_string = settings['filter']
+            restart_required = True
+            
+        if 'enable_http_logging' in settings:
+            self.enable_http_logging = settings['enable_http_logging']
+            
+        if 'enable_dns_logging' in settings:
+            self.enable_dns_logging = settings['enable_dns_logging']
+        
+        return restart_required
 
 if __name__ == "__main__":
-    # Simple test for the packet sniffer
-    def print_packet(pkt):
-        print(json.dumps(pkt, indent=2))
-    
+    # Test code
     q = queue.Queue()
-    sniffer = PacketSniffer(output_queue=q)
-    sniffer.start_capture(packet_count=10)  # Capture 10 packets
+    sniffer = PacketSniffer(output_queue=q, interface="eth0", filter_string="tcp")
+    sniffer.start_capture()
     
-    # Process packets as they come in
-    while sniffer.running or not q.empty():
-        try:
-            packet = q.get(block=True, timeout=1)
-            print_packet(packet)
-        except queue.Empty:
-            pass
+    try:
+        # Run for 10 seconds
+        for i in range(10):
+            time.sleep(1)
+            print(f"Captured {sniffer.packet_count} packets")
+            
+            # Print a sample packet if available
+            try:
+                packet = q.get(block=False)
+                print(f"Sample packet: {packet}")
+            except queue.Empty:
+                pass
+                
+    finally:
+        sniffer.stop_capture()
+        print(f"Final stats: {sniffer.get_stats()}")
