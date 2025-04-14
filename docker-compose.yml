@@ -1,0 +1,46 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: nids-backend
+    restart: unless-stopped
+    environment:
+      - PORT=5000
+      - JWT_SECRET_KEY=your_secret_key_change_this_in_production
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD=password
+      - FLASK_DEBUG=False
+    volumes:
+      - ./backend:/app
+      - ./data/models:/app/models
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    networks:
+      - nids-network
+    ports:
+      - "5001:5000"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: nids-frontend
+    restart: unless-stopped
+    environment:
+      - REACT_APP_API_URL=http://localhost:5001/api
+    depends_on:
+      - backend
+    networks:
+      - nids-network
+    ports:
+      - "80:80"
+
+networks:
+  nids-network:
+    driver: bridge
+
+volumes:
+  models:
+    driver: local
