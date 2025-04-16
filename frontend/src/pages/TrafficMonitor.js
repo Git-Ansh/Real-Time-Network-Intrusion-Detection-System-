@@ -19,7 +19,8 @@ import {
 import { ExclamationTriangleIcon } from "../components/ui/icons";
 import * as d3 from "d3";
 
-const API_URL = process.env.REACT_APP_API_URL || "http://localhost:5001/api";
+// API URL - Updated for serverless functions
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:3000/api";
 
 const TrafficMonitor = () => {
   const [packets, setPackets] = useState([]);
@@ -71,18 +72,17 @@ const TrafficMonitor = () => {
     try {
       setLoading(true);
 
-      // Build query parameters
-      const params = new URLSearchParams({
+      // Build query parameters for serverless function
+      const params = {
+        endpoint: "packets",
         limit: 100,
-      });
+      };
 
       if (protocolFilter) {
-        params.append("protocol", protocolFilter);
+        params.protocol = protocolFilter;
       }
 
-      const response = await axios.get(
-        `${API_URL}/data/packets?${params.toString()}`
-      );
+      const response = await axios.get(`${API_URL}/dashboard-data`, { params });
       setPackets(response.data);
       setError(null);
     } catch (err) {
@@ -244,7 +244,7 @@ const TrafficMonitor = () => {
         link.style("stroke", "#999");
       });
 
-    // Add text labels
+    // Add labels
     const label = svg
       .append("g")
       .attr("class", "labels")
@@ -252,13 +252,17 @@ const TrafficMonitor = () => {
       .data(nodes)
       .enter()
       .append("text")
-      .text((d) => d.id)
       .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .text((d) => {
+        // Truncate long IP addresses
+        const ip = d.id;
+        return ip.length > 15 ? ip.substring(0, 12) + "..." : ip;
+      })
       .style("font-size", "8px")
-      .style("fill", "#000")
       .style("pointer-events", "none");
 
-    // Update node and link positions
+    // Update simulation on tick
     simulation.on("tick", () => {
       link
         .attr("x1", (d) => d.source.x)
@@ -373,8 +377,8 @@ const TrafficMonitor = () => {
     svg
       .append("text")
       .attr("text-anchor", "end")
-      .attr("x", innerWidth / 2 + margin.left)
-      .attr("y", innerHeight + margin.top + 20)
+      .attr("x", innerWidth / 2)
+      .attr("y", innerHeight + margin.bottom - 5)
       .text("Time");
 
     // Add Y axis label
@@ -384,7 +388,7 @@ const TrafficMonitor = () => {
       .attr("transform", "rotate(-90)")
       .attr("y", -margin.left + 15)
       .attr("x", -innerHeight / 2)
-      .text("Packet Size");
+      .text("Packet size (bytes)");
 
     // Add legend
     const legendData = [
@@ -397,23 +401,27 @@ const TrafficMonitor = () => {
 
     const legend = svg
       .append("g")
-      .attr("transform", `translate(${innerWidth - 100}, 0)`);
+      .attr("font-family", "sans-serif")
+      .attr("font-size", 10)
+      .attr("text-anchor", "start")
+      .selectAll("g")
+      .data(legendData)
+      .join("g")
+      .attr("transform", (d, i) => `translate(${innerWidth - 100}, ${i * 20})`);
 
-    legendData.forEach((item, i) => {
-      legend
-        .append("circle")
-        .attr("cx", 0)
-        .attr("cy", i * 20)
-        .attr("r", 6)
-        .attr("fill", item.color);
+    legend
+      .append("circle")
+      .attr("cx", 0)
+      .attr("cy", 0)
+      .attr("r", 6)
+      .attr("fill", (d) => d.color);
 
-      legend
-        .append("text")
-        .attr("x", 15)
-        .attr("y", i * 20 + 4)
-        .text(item.label)
-        .style("font-size", "12px");
-    });
+    legend
+      .append("text")
+      .attr("x", 15)
+      .attr("y", 4)
+      .text((d) => d.label)
+      .style("font-size", "12px");
   };
 
   return (

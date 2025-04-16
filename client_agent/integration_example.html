@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NIDS Browser Agent Integration Example</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      line-height: 1.6;
+      color: #333;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    pre {
+      background-color: #f5f5f5;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-x: auto;
+    }
+    code {
+      font-family: 'Courier New', Courier, monospace;
+    }
+    h1, h2, h3 {
+      color: #2c3e50;
+    }
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 15px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 4px 2px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .actions {
+      margin: 20px 0;
+      padding: 20px;
+      background-color: #f9f9f9;
+      border-radius: 5px;
+    }
+    .log {
+      margin-top: 20px;
+      height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .log-entry {
+      margin: 5px 0;
+      font-family: 'Courier New', Courier, monospace;
+    }
+    .success {
+      color: #4CAF50;
+    }
+    .error {
+      color: #f44336;
+    }
+    .warning {
+      color: #ff9800;
+    }
+  </style>
+</head>
+<body>
+  <h1>NIDS Browser Agent Integration Example</h1>
+  
+  <p>This page demonstrates how to integrate and use the NIDS Browser Agent to monitor network requests from your web application.</p>
+
+  <h2>Setup</h2>
+  <p>First, include the browser agent script in your HTML:</p>
+  <pre><code>&lt;script src="browser_agent.js"&gt;&lt;/script&gt;</code></pre>
+
+  <p>Then initialize the agent with your organization's API key:</p>
+  <pre><code>// Initialize the NIDS agent
+NidsAgent.initialize({
+    apiKey: 'your_api_key_here',
+    ingestEndpoint: 'https://your-domain.com/api/browser-ingest',
+    sampleRate: 1.0, // Monitor 100% of requests
+    enableConsoleMessages: true // Set to false in production
+});</code></pre>
+
+  <h2>Live Demo</h2>
+  <p>This page has the NIDS Browser Agent initialized in test mode. You can use the buttons below to test its functionality:</p>
+
+  <div class="actions">
+    <button id="makeRequest">Make HTTP Request</button>
+    <button id="makeError">Make Error Request</button>
+    <button id="sendCustom">Send Custom Metric</button>
+    <button id="toggleAgent">Stop Agent</button>
+    <button id="clearLog">Clear Log</button>
+  </div>
+
+  <h3>Log</h3>
+  <div id="log" class="log"></div>
+
+  <h2>Advanced Configuration</h2>
+  <p>The agent can be customized with various options:</p>
+  <pre><code>NidsAgent.initialize({
+    apiKey: 'your_api_key_here',
+    ingestEndpoint: 'https://your-domain.com/api/browser-ingest',
+    sampleRate: 0.5, // Monitor 50% of requests
+    autoStart: true,  // Start monitoring immediately
+    reportErrors: true, // Report JS errors
+    enableConsoleMessages: false, // Disable console messages
+    excludePatterns: [
+        'analytics.com',
+        '/assets/',
+        /\.(png|jpg|gif|svg|css)$/
+    ],
+    redactSensitiveParams: [
+        'password', 'token', 'key', 'secret'
+    ],
+    fingerprinting: true
+});</code></pre>
+
+  <h2>API Reference</h2>
+  <ul>
+    <li><code>NidsAgent.initialize(config)</code> - Initialize the agent with the provided configuration</li>
+    <li><code>NidsAgent.start()</code> - Manually start monitoring (if autoStart was false)</li>
+    <li><code>NidsAgent.stop()</code> - Stop monitoring network requests</li>
+    <li><code>NidsAgent.sendCustomMetric(name, data)</code> - Send a custom metric to the NIDS server</li>
+  </ul>
+
+  <!-- Include the browser agent -->
+  <script src="browser_agent.js"></script>
+
+  <script>
+    // Log function
+    function logToPage(message, type = 'info') {
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // Test initialization
+    try {
+      // Initialize with test API key
+      NidsAgent.initialize({
+        apiKey: 'test_api_key_for_demo',
+        ingestEndpoint: 'http://localhost:3000/api/browser-ingest',
+        enableConsoleMessages: true
+      });
+      logToPage('Agent initialized successfully', 'success');
+    } catch (e) {
+      logToPage(`Error initializing agent: ${e.message}`, 'error');
+    }
+
+    // Make request button
+    document.getElementById('makeRequest').addEventListener('click', () => {
+      logToPage('Making test HTTP request...');
+      fetch('https://jsonplaceholder.typicode.com/todos/1')
+        .then(response => response.json())
+        .then(data => {
+          logToPage('Request successful: ' + JSON.stringify(data), 'success');
+        });
+    });
+
+    // Make error request button
+    document.getElementById('makeError').addEventListener('click', () => {
+      logToPage('Making error request...');
+      fetch('https://this-does-not-exist-123456.com/test')
+        .then(response => response.json())
+        .catch(error => {
+          logToPage(`Error in request: ${error.message}`, 'error');
+        });
+    });
+
+    // Send custom metric button
+    document.getElementById('sendCustom').addEventListener('click', () => {
+      const customData = {
+        event: 'user_action',
+        action: 'button_click',
+        element: 'submit_button',
+        pageId: 'checkout',
+        timestamp: Date.now()
+      };
+      NidsAgent.sendCustomMetric('user_interaction', customData);
+      logToPage('Custom metric sent: ' + JSON.stringify(customData), 'success');
+    });
+
+    // Toggle agent button
+    const toggleBtn = document.getElementById('toggleAgent');
+    toggleBtn.addEventListener('click', () => {
+      if (toggleBtn.textContent === 'Stop Agent') {
+        NidsAgent.stop();
+        toggleBtn.textContent = 'Start Agent';
+        logToPage('Agent stopped', 'warning');
+      } else {
+        NidsAgent.start();
+        toggleBtn.textContent = 'Stop Agent';
+        logToPage('Agent started', 'success');
+      }
+    });
+
+    // Clear log button
+    document.getElementById('clearLog').addEventListener('click', () => {
+      document.getElementById('log').innerHTML = '';
+    });
+  </script>
+</body>
+</html>
